@@ -69,6 +69,8 @@
  */
 
 
+rd_avl_node_t* my_search_tree (rd_avl_t *ravl, rd_avl_node_t *node, void *elm);
+void validate_tree (rd_avl_node_t *tree, int level);
 
 /**
  * @brief Remove and free cache entry.
@@ -80,19 +82,60 @@ static RD_INLINE void
 rd_kafka_metadata_cache_delete(rd_kafka_t *rk,
                                struct rd_kafka_metadata_cache_entry *rkmce,
                                int unlink_avl) {
+        rd_avl_node_t* e1;
+        rd_avl_node_t* e2;
+
         if (unlink_avl) {
                 RD_AVL_REMOVE_ELM(&rk->rk_metadata_cache.rkmc_avl, rkmce);
                 if (!RD_KAFKA_UUID_IS_ZERO(
                         rkmce->rkmce_metadata_internal_topic.topic_id)) {
-                        RD_AVL_REMOVE_ELM(&rk->rk_metadata_cache.rkmc_avl_by_id,
-                                          rkmce);
+
+                        rd_avl_wrlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+                        validate_tree (rk->rk_metadata_cache.rkmc_avl_by_id.ravl_root, 0);
+                        rd_avl_wrunlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+
+                        rd_avl_wrlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+                        e1 = my_search_tree (&rk->rk_metadata_cache.rkmc_avl_by_id, rk->rk_metadata_cache.rkmc_avl_by_id.ravl_root, rkmce);
+                        rd_avl_wrunlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+
+                        RD_AVL_REMOVE_ELM(&rk->rk_metadata_cache.rkmc_avl_by_id, rkmce);
+
+                        rd_avl_wrlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+                        e2 = my_search_tree (&rk->rk_metadata_cache.rkmc_avl_by_id, rk->rk_metadata_cache.rkmc_avl_by_id.ravl_root, rkmce);
+                        rd_avl_wrunlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+
+                        if (e1 != NULL && e2 != NULL)
+                        {
+                                e1 = e2;
+                        }
+
+                        rd_avl_wrlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+                        validate_tree (rk->rk_metadata_cache.rkmc_avl_by_id.ravl_root, 0);
+                        rd_avl_wrunlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
                 }
         }
         TAILQ_REMOVE(&rk->rk_metadata_cache.rkmc_expiry, rkmce, rkmce_link);
         rd_kafka_assert(NULL, rk->rk_metadata_cache.rkmc_cnt > 0);
         rk->rk_metadata_cache.rkmc_cnt--;
 
+        rd_avl_wrlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+        validate_tree (rk->rk_metadata_cache.rkmc_avl_by_id.ravl_root, 0);
+        rd_avl_wrunlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+
+        rd_avl_wrlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+        e2 = my_search_tree (&rk->rk_metadata_cache.rkmc_avl_by_id, rk->rk_metadata_cache.rkmc_avl_by_id.ravl_root, rkmce);
+        rd_avl_wrunlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+
+        if (e2 != NULL && e2->ran_elm == rkmce)
+        {
+              e2 = NULL; 
+        }
+
         rd_free(rkmce);
+
+        rd_avl_wrlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+        validate_tree (rk->rk_metadata_cache.rkmc_avl_by_id.ravl_root, 0);
+        rd_avl_wrunlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
 }
 
 /**
@@ -270,6 +313,63 @@ int rd_kafka_metadata_partition_id_cmp(const void *_a, const void *_b) {
         return RD_CMP(a->id, b->id);
 }
 
+rd_avl_node_t* my_search_tree (rd_avl_t *ravl, rd_avl_node_t *node, void *elm)
+{
+        if (node == NULL)
+                return NULL;
+
+        rd_avl_dir_t dir;
+        int r;
+        if ((r = ravl->ravl_cmp(elm, node->ran_elm)) == 0)
+                return node;
+        else if (r < 0)
+                dir = RD_AVL_LEFT;
+        else /* > 0 */
+                dir = RD_AVL_RIGHT;
+        
+        rd_avl_node_t* left = my_search_tree(ravl, node->ran_p[0], elm);
+        rd_avl_node_t* right = my_search_tree(ravl, node->ran_p[1], elm);
+
+        if (left != NULL)
+        {
+                if (dir != RD_AVL_LEFT)
+                {
+                        dir = RD_AVL_RIGHT;
+                }
+                
+                return left;
+        }
+
+        if (right != NULL)
+        {
+                if (dir != RD_AVL_RIGHT)
+                {
+                        dir = RD_AVL_LEFT;
+                }
+
+                return right;
+        }
+
+        return NULL;
+}
+
+void validate_tree (rd_avl_node_t *tree, int level)
+{
+        if (tree == NULL) return;
+
+        if (tree->ran_elm == NULL)
+        {
+              tree->ran_elm = NULL;  
+        }
+
+        if (level > 50)
+        {
+                level ++;
+        }
+
+        validate_tree(tree ->ran_p[0], level + 1);
+        validate_tree(tree ->ran_p[1], level + 1);
+}
 
 /**
  * @brief Add (and replace) cache entry for topic.
@@ -290,7 +390,6 @@ static struct rd_kafka_metadata_cache_entry *rd_kafka_metadata_cache_insert(
         struct rd_kafka_metadata_cache_entry *rkmce, *old, *old_by_id = NULL;
         rd_tmpabuf_t tbuf;
         int i;
-
         /* Metadata is stored in one contigious buffer where structs and
          * and pointed-to fields are layed out in a memory aligned fashion.
          * rd_tmpabuf_t provides the infrastructure to do this.
@@ -390,28 +489,72 @@ static struct rd_kafka_metadata_cache_entry *rd_kafka_metadata_cache_insert(
         /* Insert (and replace existing) entry. */
         old = RD_AVL_INSERT(&rk->rk_metadata_cache.rkmc_avl, rkmce,
                             rkmce_avlnode);
+
         /* Insert (and replace existing) entry into the AVL tree sorted
          * by topic id. */
         if (!RD_KAFKA_UUID_IS_ZERO(
                 rkmce->rkmce_metadata_internal_topic.topic_id)) {
+
+                rd_avl_wrlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+                validate_tree (rk->rk_metadata_cache.rkmc_avl_by_id.ravl_root, 0);
+                rd_avl_wrunlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+
                 /* If topic id isn't zero insert cache entry into this tree */
                 old_by_id = RD_AVL_INSERT(&rk->rk_metadata_cache.rkmc_avl_by_id,
                                           rkmce, rkmce_avlnode_by_id);
+
+                rd_avl_wrlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+                validate_tree (rk->rk_metadata_cache.rkmc_avl_by_id.ravl_root, 0);
+                rd_avl_wrunlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+
         } else if (old && !RD_KAFKA_UUID_IS_ZERO(
                               old->rkmce_metadata_internal_topic.topic_id)) {
+                                
+                rd_avl_wrlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+                validate_tree (rk->rk_metadata_cache.rkmc_avl_by_id.ravl_root, 0);
+                rd_avl_wrunlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+
                 /* If it had a topic id, remove it from the tree */
                 RD_AVL_REMOVE_ELM(&rk->rk_metadata_cache.rkmc_avl_by_id, old);
+
+                rd_avl_wrlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+                validate_tree (rk->rk_metadata_cache.rkmc_avl_by_id.ravl_root, 0);
+                rd_avl_wrunlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
         }
         if (old) {
+                
+                rd_avl_wrlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+                validate_tree (rk->rk_metadata_cache.rkmc_avl_by_id.ravl_root, 0);
+                rd_avl_wrunlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+
                 /* Delete and free old cache entry */
-                rd_kafka_metadata_cache_delete(rk, old, 0);
+                rd_kafka_metadata_cache_delete(rk, old, 1);
+                // rd_kafka_metadata_cache_delete(rk, old, 0);
+
+                rd_avl_wrlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+                validate_tree (rk->rk_metadata_cache.rkmc_avl_by_id.ravl_root, 0);
+                rd_avl_wrunlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
         }
         if (old_by_id && old_by_id != old) {
                 /* If there was a different cache entry in this tree,
                  * remove and free it. */
+
+                rd_avl_wrlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+                validate_tree (rk->rk_metadata_cache.rkmc_avl_by_id.ravl_root, 0);
+                rd_avl_wrunlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+
                 RD_AVL_REMOVE_ELM(&rk->rk_metadata_cache.rkmc_avl, old_by_id);
-                rd_kafka_metadata_cache_delete(rk, old_by_id, 0);
+                rd_kafka_metadata_cache_delete(rk, old_by_id, 1);
+                // rd_kafka_metadata_cache_delete(rk, old_by_id, 0);
+                
+                rd_avl_wrlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+                validate_tree (rk->rk_metadata_cache.rkmc_avl_by_id.ravl_root, 0);
+                rd_avl_wrunlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
         }
+
+        rd_avl_wrlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
+        validate_tree (rk->rk_metadata_cache.rkmc_avl_by_id.ravl_root, 0);
+        rd_avl_wrunlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
 
         /* Explicitly not freeing the tmpabuf since rkmce points to its
          * memory. */
