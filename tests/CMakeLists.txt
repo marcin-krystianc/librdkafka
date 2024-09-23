@@ -136,6 +136,8 @@ set(
     0143-exponential_backoff_mock.c
     0144-idempotence_mock.c
     0145-pause_resume_mock.c
+    0146-metadata_mock.c
+    0150-telemetry_mock.c
     8000-idle.cpp
     8001-fetch_from_follower_mock_manual.c
     test.c

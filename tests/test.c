@@ -260,6 +260,8 @@ _TEST_DECL(0142_reauthentication);
 _TEST_DECL(0143_exponential_backoff_mock);
 _TEST_DECL(0144_idempotence_mock);
 _TEST_DECL(0145_pause_resume_mock);
+_TEST_DECL(0146_metadata_mock);
+_TEST_DECL(0150_telemetry_mock);
 
 /* Manual tests */
 _TEST_DECL(8000_idle);
@@ -516,6 +518,8 @@ struct test tests[] = {
     _TEST(0143_exponential_backoff_mock, TEST_F_LOCAL),
     _TEST(0144_idempotence_mock, TEST_F_LOCAL, TEST_BRKVER(0, 11, 0, 0)),
     _TEST(0145_pause_resume_mock, TEST_F_LOCAL),
+    _TEST(0146_metadata_mock, TEST_F_LOCAL),
+    _TEST(0150_telemetry_mock, 0),
 
 
     /* Manual tests */
@@ -7135,7 +7139,63 @@ rd_kafka_mock_cluster_t *test_mock_cluster_new(int broker_cnt,
         return mcluster;
 }
 
+/**
+ * @brief Get current number of matching requests,
+ *        received by mock cluster \p mcluster, matching
+ *        function \p match , called with opaque \p opaque .
+ */
+static size_t test_mock_get_matching_request_cnt(
+    rd_kafka_mock_cluster_t *mcluster,
+    rd_bool_t (*match)(rd_kafka_mock_request_t *request, void *opaque),
+    void *opaque) {
+        size_t i;
+        size_t request_cnt;
+        rd_kafka_mock_request_t **requests;
+        size_t matching_request_cnt = 0;
 
+        requests = rd_kafka_mock_get_requests(mcluster, &request_cnt);
+
+        for (i = 0; i < request_cnt; i++) {
+                if (match(requests[i], opaque))
+                        matching_request_cnt++;
+        }
+
+        rd_kafka_mock_request_destroy_array(requests, request_cnt);
+        return matching_request_cnt;
+}
+
+/**
+ * @brief Wait that at least \p expected_cnt matching requests
+ *        have been received by the mock cluster,
+ *        using match function \p match ,
+ *        plus \p confidence_interval_ms has passed
+ *
+ * @param expected_cnt Number of expected matching request
+ * @param confidence_interval_ms Time to wait after \p expected_cnt matching
+ *                               requests have been seen
+ * @param match Match function that takes a request and \p opaque
+ * @param opaque Opaque value needed by function \p match
+ *
+ * @return Number of matching requests received.
+ */
+size_t test_mock_wait_matching_requests(
+    rd_kafka_mock_cluster_t *mcluster,
+    size_t expected_cnt,
+    int confidence_interval_ms,
+    rd_bool_t (*match)(rd_kafka_mock_request_t *request, void *opaque),
+    void *opaque) {
+        size_t matching_request_cnt = 0;
+
+        while (matching_request_cnt < expected_cnt) {
+                matching_request_cnt =
+                    test_mock_get_matching_request_cnt(mcluster, match, opaque);
+                if (matching_request_cnt < expected_cnt)
+                        rd_usleep(100 * 1000, 0);
+        }
+
+        rd_usleep(confidence_interval_ms * 1000, 0);
+        return test_mock_get_matching_request_cnt(mcluster, match, opaque);
+}
 
 /**
  * @name Sub-tests
@@ -7249,7 +7309,7 @@ const char *test_consumer_group_protocol() {
 
 int test_consumer_group_protocol_generic() {
         return !test_consumer_group_protocol_str ||
-               !strcmp(test_consumer_group_protocol_str, "generic");
+               !strcmp(test_consumer_group_protocol_str, "classic");
 }
 
 int test_consumer_group_protocol_consumer() {

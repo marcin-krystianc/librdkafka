@@ -896,6 +896,7 @@ int rd_kafka_retry_msgq(rd_kafka_msgq_t *destq,
                         int retry_max_ms) {
         rd_kafka_msgq_t retryable = RD_KAFKA_MSGQ_INITIALIZER(retryable);
         rd_kafka_msg_t *rkm, *tmp;
+        rd_ts_t now;
         int64_t jitter = rd_jitter(100 - RD_KAFKA_RETRY_JITTER_PERCENT,
                                    100 + RD_KAFKA_RETRY_JITTER_PERCENT);
         /* Scan through messages to see which ones are eligible for retry,
@@ -903,7 +904,14 @@ int rd_kafka_retry_msgq(rd_kafka_msgq_t *destq,
          * set backoff time for first message and optionally
          * increase retry count for each message.
          * Sorted insert is not necessary since the original order
-         * srcq order is maintained. */
+         * srcq order is maintained.
+         *
+         * Start timestamp for calculating backoff is common,
+         * to avoid that messages from the same batch
+         * have different backoff, as they need to be retried
+         * by reconstructing the same batch, when idempotency is
+         * enabled. */
+        now = rd_clock();
         TAILQ_FOREACH_SAFE(rkm, &srcq->rkmq_msgs, rkm_link, tmp) {
                 if (rkm->rkm_u.producer.retries + incr_retry > max_retries)
                         continue;
@@ -927,7 +935,7 @@ int rd_kafka_retry_msgq(rd_kafka_msgq_t *destq,
                         backoff = jitter * backoff * 10;
                         if (backoff > retry_max_ms * 1000)
                                 backoff = retry_max_ms * 1000;
-                        backoff = rd_clock() + backoff;
+                        backoff = now + backoff;
                 }
                 rkm->rkm_u.producer.ts_backoff = backoff;
 
@@ -2978,8 +2986,12 @@ rd_kafka_topic_partition_t *rd_kafka_topic_partition_list_upsert(
 
 /**
  * @brief Creates a copy of \p rktpar and adds it to \p rktparlist
+ *
+ * @return Copy of passed partition that was added to the list
+ *
+ * @remark Ownership of returned partition remains of the list.
  */
-void rd_kafka_topic_partition_list_add_copy(
+rd_kafka_topic_partition_t *rd_kafka_topic_partition_list_add_copy(
     rd_kafka_topic_partition_list_t *rktparlist,
     const rd_kafka_topic_partition_t *rktpar) {
         rd_kafka_topic_partition_t *dst;
@@ -2988,6 +3000,7 @@ void rd_kafka_topic_partition_list_add_copy(
             __FUNCTION__, __LINE__, rktparlist, rktpar->topic,
             rktpar->partition, NULL, rktpar->_private);
         rd_kafka_topic_partition_update(dst, rktpar);
+        return dst;
 }
 
 
@@ -3131,6 +3144,14 @@ int rd_kafka_topic_partition_cmp_topic(const void *_a, const void *_b) {
         return strcmp(a->topic, b->topic);
 }
 
+/** @brief Compare only the topic id */
+int rd_kafka_topic_partition_cmp_topic_id(const void *_a, const void *_b) {
+        const rd_kafka_topic_partition_t *a = _a;
+        const rd_kafka_topic_partition_t *b = _b;
+        return rd_kafka_Uuid_cmp(rd_kafka_topic_partition_get_topic_id(a),
+                                 rd_kafka_topic_partition_get_topic_id(b));
+}
+
 static int rd_kafka_topic_partition_cmp_opaque(const void *_a,
                                                const void *_b,
                                                void *opaque) {
@@ -3244,7 +3265,7 @@ int rd_kafka_topic_partition_list_find_idx(
  * @brief Search 'rktparlist' for \p topic_id and \p partition.
  * @returns the elems[] index or -1 on miss.
  */
-int rd_kafka_topic_partition_list_find_by_id_idx(
+int rd_kafka_topic_partition_list_find_idx_by_id(
     const rd_kafka_topic_partition_list_t *rktparlist,
     rd_kafka_Uuid_t topic_id,
     int32_t partition) {
@@ -3257,12 +3278,27 @@ int rd_kafka_topic_partition_list_find_by_id_idx(
 /**
  * @returns the first element that matches \p topic, regardless of partition.
  */
-rd_kafka_topic_partition_t *rd_kafka_topic_partition_list_find_topic(
+rd_kafka_topic_partition_t *rd_kafka_topic_partition_list_find_topic_by_name(
     const rd_kafka_topic_partition_list_t *rktparlist,
     const char *topic) {
         int i = rd_kafka_topic_partition_list_find0(
             rktparlist, topic, RD_KAFKA_PARTITION_UA,
             rd_kafka_topic_partition_cmp_topic);
+        if (i == -1)
+                return NULL;
+        else
+                return &rktparlist->elems[i];
+}
+
+/**
+ * @returns the first element that matches \p topic_id, regardless of partition.
+ */
+rd_kafka_topic_partition_t *rd_kafka_topic_partition_list_find_topic_by_id(
+    const rd_kafka_topic_partition_list_t *rktparlist,
+    const rd_kafka_Uuid_t topic_id) {
+        int i = rd_kafka_topic_partition_list_find_by_id0(
+            rktparlist, topic_id, RD_KAFKA_PARTITION_UA,
+            rd_kafka_topic_partition_cmp_topic_id);
         if (i == -1)
                 return NULL;
         else
