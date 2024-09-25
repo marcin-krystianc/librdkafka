@@ -69,101 +69,111 @@ static void dr_cb(rd_kafka_t *rk,
  * Produces 'msgcnt' messages split over 'partition_cnt' partitions.
  */
 static void produce_messages(uint64_t testid,
-                             const char *topic,
+                             const char **topics,
+                             size_t topics_cnt,
                              int partition_cnt,
                              int msgcnt) {
         int r;
         rd_kafka_t *rk;
-        rd_kafka_topic_t *rkt;
-        rd_kafka_conf_t *conf;
-        rd_kafka_topic_conf_t *topic_conf;
+        rd_kafka_topic_t **rkts;
         char errstr[512];
         char msg[128];
         int failcnt = 0;
         int i;
-        rd_kafka_message_t *rkmessages;
         int32_t partition;
         int msgid = 0;
 
-        test_conf_init(&conf, &topic_conf, 20);
-
-        rd_kafka_conf_set_dr_cb(conf, dr_cb);
-
-        /* Make sure all replicas are in-sync after producing
-         * so that consume test wont fail. */
-        rd_kafka_topic_conf_set(topic_conf, "request.required.acks", "-1",
-                                errstr, sizeof(errstr));
 
         /* Create kafka instance */
-        rk = test_create_handle(RD_KAFKA_PRODUCER, conf);
+        rd_kafka_conf_t *conf1 = NULL;
+        rk = test_create_handle(RD_KAFKA_PRODUCER, conf1);
 
-        rkt = rd_kafka_topic_new(rk, topic, topic_conf);
-        if (!rkt)
-                TEST_FAIL("Failed to create topic: %s\n", rd_strerror(errno));
+        rkts = malloc (sizeof(rd_kafka_topic_t*) * topics_cnt);
+        for (size_t i = 0; i < topics_cnt; i++)
+        {                
+                rd_kafka_conf_t *conf;
+                rd_kafka_topic_conf_t *topic_conf;
+                test_conf_init(&conf, &topic_conf, 20);
+                rd_kafka_conf_set_dr_cb(conf, dr_cb);
+                /* Make sure all replicas are in-sync after producing
+                * so that consume test wont fail. */
+                rd_kafka_topic_conf_set(topic_conf, "request.required.acks", "-1",
+                                        errstr, sizeof(errstr));
+                                        
+                rkts[i] = rd_kafka_topic_new(rk, topics[i], topic_conf);
+                if (!rkts[i])
+                        TEST_FAIL("Failed to create topic: %s\n", rd_strerror(errno));
+        }        
 
         /* Create messages. */
         prod_msg_remains = msgcnt;
-        rkmessages       = calloc(sizeof(*rkmessages), msgcnt / partition_cnt);
-        for (partition = 0; partition < partition_cnt; partition++) {
-                int batch_cnt = msgcnt / partition_cnt;
+        
+        for (size_t topic = 0; topic < topics_cnt; topic++) {
+                rd_kafka_message_t *rkmessages = calloc(sizeof(*rkmessages), msgcnt / partition_cnt);
 
-                for (i = 0; i < batch_cnt; i++) {
-                        rd_snprintf(msg, sizeof(msg),
-                                    "testid=%" PRIu64 ", partition=%i, msg=%i",
-                                    testid, (int)partition, msgid);
-                        rkmessages[i].payload = rd_strdup(msg);
-                        rkmessages[i].len     = strlen(msg);
-                        msgid++;
-                }
+                for (partition = 0; partition < partition_cnt; partition++) {                
+                        int batch_cnt = msgcnt / partition_cnt;
 
-                TEST_SAY("Start produce to partition %i: msgs #%d..%d\n",
-                         (int)partition, msgid - batch_cnt, msgid);
-                /* Produce batch for this partition */
-                r = rd_kafka_produce_batch(rkt, partition, RD_KAFKA_MSG_F_FREE,
-                                           rkmessages, batch_cnt);
-                if (r == -1)
-                        TEST_FAIL(
-                            "Failed to produce "
-                            "batch for partition %i: %s",
-                            (int)partition,
-                            rd_kafka_err2str(rd_kafka_last_error()));
-
-                /* Scan through messages to check for errors. */
-                for (i = 0; i < batch_cnt; i++) {
-                        if (rkmessages[i].err) {
-                                failcnt++;
-                                if (failcnt < 100)
-                                        TEST_SAY("Message #%i failed: %s\n", i,
-                                                 rd_kafka_err2str(
-                                                     rkmessages[i].err));
+                        for (i = 0; i < batch_cnt; i++) {
+                                rd_snprintf(msg, sizeof(msg),
+                                        "testid=%" PRIu64 ", partition=%i, msg=%i",
+                                        testid, (int)partition, msgid);
+                                rkmessages[i].payload = rd_strdup(msg);
+                                rkmessages[i].len     = strlen(msg);
+                                msgid++;
                         }
-                }
 
-                /* All messages should've been produced. */
-                if (r < batch_cnt) {
-                        TEST_SAY(
-                            "Not all messages were accepted "
-                            "by produce_batch(): %i < %i\n",
-                            r, batch_cnt);
+                        TEST_SAY("Start produce to partition %i: msgs #%d..%d\n",
+                         (int)partition, msgid - batch_cnt, msgid);
 
-                        if (batch_cnt - r != failcnt)
+                
+                        /* Produce batch for this partition */
+                        r = rd_kafka_produce_batch(rkts[topic], partition, RD_KAFKA_MSG_F_FREE,
+                                                rkmessages, batch_cnt);
+                        if (r == -1)
+                                TEST_FAIL(
+                                "Failed to produce "
+                                "batch for partition %i: %s",
+                                (int)partition,
+                                rd_kafka_err2str(rd_kafka_last_error()));
+
+                        /* Scan through messages to check for errors. */
+                        for (i = 0; i < batch_cnt; i++) {
+                                if (rkmessages[i].err) {
+                                        failcnt++;
+                                        if (failcnt < 100)
+                                                TEST_SAY("Message #%i failed: %s\n", i,
+                                                        rd_kafka_err2str(
+                                                        rkmessages[i].err));
+                                }
+                        }
+
+                        /* All messages should've been produced. */
+                        if (r < batch_cnt) {
                                 TEST_SAY(
-                                    "Discrepency between failed "
-                                    "messages (%i) "
-                                    "and return value %i (%i - %i)\n",
-                                    failcnt, batch_cnt - r, batch_cnt, r);
-                        TEST_FAIL("%i/%i messages failed\n", batch_cnt - r,
-                                  batch_cnt);
+                                "Not all messages were accepted "
+                                "by produce_batch(): %i < %i\n",
+                                r, batch_cnt);
+
+                                if (batch_cnt - r != failcnt)
+                                        TEST_SAY(
+                                        "Discrepency between failed "
+                                        "messages (%i) "
+                                        "and return value %i (%i - %i)\n",
+                                        failcnt, batch_cnt - r, batch_cnt, r);
+                                TEST_FAIL("%i/%i messages failed\n", batch_cnt - r,
+                                        batch_cnt);
+                        }
+
+                        TEST_SAY(
+                        "Produced %i messages to partition %i, "
+                        "waiting for deliveries\n",
+                        r, partition);
                 }
 
-                TEST_SAY(
-                    "Produced %i messages to partition %i, "
-                    "waiting for deliveries\n",
-                    r, partition);
+                free(rkmessages);
         }
 
-
-        free(rkmessages);
 
         /* Wait for messages to be delivered */
         while (rd_kafka_outq_len(rk) > 0)
@@ -176,8 +186,13 @@ static void produce_messages(uint64_t testid,
                 TEST_FAIL("Still waiting for %i messages to be produced",
                           prod_msg_remains);
 
-        /* Destroy topic */
-        rd_kafka_topic_destroy(rkt);
+        /* Destroy topics */
+        for (size_t i = 0; i < topics_cnt; i++)
+        {
+                rd_kafka_topic_destroy(rkts[i]);
+        }
+
+        free (rkts);
 
         /* Destroy rdkafka instance */
         TEST_SAY("Destroying kafka instance %s\n", rd_kafka_name(rk));
@@ -493,37 +508,49 @@ static void consume_messages_with_queues(uint64_t testid,
 static void test_produce_consume(void) {
         int msgcnt        = test_quick ? 100 : 1000;
         int partition_cnt = 2;
+        int topics_cnt = 10;
         int i;
         uint64_t testid;
         int msg_base = 0;
-        const char *topic;
+        const char **topics;
 
         /* Generate a testid so we can differentiate messages
          * from other tests */
         testid = test_id_generate();
+        topics = malloc (sizeof(const char *) * topics_cnt);
 
         /* Read test.conf to configure topic name */
         test_conf_init(NULL, NULL, 20);
-        topic = test_mk_topic_name("0151", 1);
-
-        TEST_SAY("Topic %s, testid %" PRIu64 "\n", topic, testid);
+        for (int topic = 0; topic < topics_cnt ; topic++)
+        {
+                topics[topic] = test_mk_topic_name("0151", 1);
+                TEST_SAY("Topic %s, testid %" PRIu64 "\n", topics[topic], testid);
+        }
 
         /* Produce messages */
-        produce_messages(testid, topic, partition_cnt, msgcnt);
-
+        produce_messages(testid, topics, topics_cnt, partition_cnt, msgcnt);
 
         /* Consume messages with standard interface */
         verify_consumed_msg_reset(msgcnt);
-        for (i = 0; i < partition_cnt; i++) {
-                consume_messages(testid, topic, i, msg_base,
-                                 msgcnt / partition_cnt, msgcnt);
-                msg_base += msgcnt / partition_cnt;
+        
+        for (int topic = 0; topic < topics_cnt; topic++) 
+        {
+                for (i = 0; i < partition_cnt; i++) {
+                        consume_messages(testid, topics[topic], i, msg_base,
+                                        msgcnt / partition_cnt, msgcnt);
+                        msg_base += msgcnt / partition_cnt;
+                }
         }
+
         verify_consumed_msg_check();
 
         /* Consume messages with queue interface */
         verify_consumed_msg_reset(msgcnt);
-        consume_messages_with_queues(testid, topic, partition_cnt, msgcnt);
+        for (int topic = 0; topic < topics_cnt; topic++)
+        {
+                consume_messages_with_queues(testid, topics[topic], partition_cnt, msgcnt);
+        }
+
         verify_consumed_msg_check();
 
         return;
