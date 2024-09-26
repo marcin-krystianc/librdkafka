@@ -31,3 +31,6 @@ cov-int
 gdbrun*.gdb
 TAGS
 vcpkg_installed
+build
+tests/tmp*
+tests/venv*

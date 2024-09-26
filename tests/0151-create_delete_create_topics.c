@@ -85,16 +85,16 @@ static void produce_messages(uint64_t testid,
 
 
         /* Create kafka instance */
-        rd_kafka_conf_t *conf1 = NULL;
-        rk = test_create_handle(RD_KAFKA_PRODUCER, conf1);
+        rd_kafka_conf_t *conf = NULL;
+        test_conf_init(&conf, NULL, 20);
+        rd_kafka_conf_set_dr_cb(conf, dr_cb);
+        rk = test_create_handle(RD_KAFKA_PRODUCER, conf);
 
         rkts = malloc (sizeof(rd_kafka_topic_t*) * topics_cnt);
         for (size_t i = 0; i < topics_cnt; i++)
         {                
-                rd_kafka_conf_t *conf;
                 rd_kafka_topic_conf_t *topic_conf;
-                test_conf_init(&conf, &topic_conf, 20);
-                rd_kafka_conf_set_dr_cb(conf, dr_cb);
+                test_conf_init(NULL, &topic_conf, 20);
                 /* Make sure all replicas are in-sync after producing
                 * so that consume test wont fail. */
                 rd_kafka_topic_conf_set(topic_conf, "request.required.acks", "-1",
@@ -106,7 +106,7 @@ static void produce_messages(uint64_t testid,
         }        
 
         /* Create messages. */
-        prod_msg_remains = msgcnt;
+        prod_msg_remains = msgcnt * topics_cnt;
         
         for (size_t topic = 0; topic < topics_cnt; topic++) {
                 rd_kafka_message_t *rkmessages = calloc(sizeof(*rkmessages), msgcnt / partition_cnt);
@@ -172,12 +172,13 @@ static void produce_messages(uint64_t testid,
                 }
 
                 free(rkmessages);
+
+                /* Wait for messages to be delivered */
+                while (rd_kafka_outq_len(rk) > 0)
+                        rd_kafka_poll(rk, 100);
         }
 
 
-        /* Wait for messages to be delivered */
-        while (rd_kafka_outq_len(rk) > 0)
-                rd_kafka_poll(rk, 100);
 
         if (fails)
                 TEST_FAIL("%i failures, see previous errors", fails);
