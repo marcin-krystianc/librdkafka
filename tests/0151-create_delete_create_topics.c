@@ -91,7 +91,7 @@ static void produce_messages(uint64_t testid,
         rk = test_create_handle(RD_KAFKA_PRODUCER, conf);
 
         rkts = malloc (sizeof(rd_kafka_topic_t*) * topics_cnt);
-        for (size_t i = 0; i < topics_cnt; i++)
+        for (size_t topic = 0; topic < topics_cnt; topic++)
         {                
                 rd_kafka_topic_conf_t *topic_conf;
                 test_conf_init(NULL, &topic_conf, 20);
@@ -100,19 +100,18 @@ static void produce_messages(uint64_t testid,
                 rd_kafka_topic_conf_set(topic_conf, "request.required.acks", "-1",
                                         errstr, sizeof(errstr));
                                         
-                rkts[i] = rd_kafka_topic_new(rk, topics[i], topic_conf);
-                if (!rkts[i])
+                rkts[topic] = rd_kafka_topic_new(rk, topics[topic], topic_conf);
+                if (!rkts[topic])
                         TEST_FAIL("Failed to create topic: %s\n", rd_strerror(errno));
-        }        
+        }
 
-        /* Create messages. */
-        prod_msg_remains = msgcnt * topics_cnt;
-        
+        int batch_cnt = msgcnt / topics_cnt / partition_cnt;
+
+        /* Create messages. */        
         for (size_t topic = 0; topic < topics_cnt; topic++) {
-                rd_kafka_message_t *rkmessages = calloc(sizeof(*rkmessages), msgcnt / partition_cnt);
+                rd_kafka_message_t *rkmessages = calloc(sizeof(*rkmessages), batch_cnt);
 
-                for (partition = 0; partition < partition_cnt; partition++) {                
-                        int batch_cnt = msgcnt / partition_cnt;
+                for (partition = 0; partition < partition_cnt; partition++) {
 
                         for (i = 0; i < batch_cnt; i++) {
                                 rd_snprintf(msg, sizeof(msg),
@@ -353,7 +352,7 @@ static void consume_messages(uint64_t testid,
         if (!rkt)
                 TEST_FAIL("Failed to create topic: %s\n", rd_strerror(errno));
 
-        TEST_SAY("Consuming %i messages from partition %i\n", batch_cnt,
+        TEST_SAY("Consuming %i messages from topic %s, partition %i\n", batch_cnt, topic,
                  partition);
 
         /* Consume messages */
@@ -524,7 +523,11 @@ static void test_produce_consume(void) {
         test_conf_init(NULL, NULL, 20);
         for (int topic = 0; topic < topics_cnt ; topic++)
         {
-                topics[topic] = test_mk_topic_name("0151", 1);
+                char tmp[16];
+                topics[topic] = calloc(sizeof(char), 128);
+                rd_snprintf(tmp, sizeof(tmp), "0151-%" PRIi16, topic);
+
+                strcpy(topics[topic], test_mk_topic_name(tmp, 1));
                 TEST_SAY("Topic %s, testid %" PRIu64 "\n", topics[topic], testid);
         }
 
@@ -534,12 +537,13 @@ static void test_produce_consume(void) {
         /* Consume messages with standard interface */
         verify_consumed_msg_reset(msgcnt);
         
+        int batch_cnt = msgcnt / topics_cnt / partition_cnt;
+
         for (int topic = 0; topic < topics_cnt; topic++) 
         {
                 for (i = 0; i < partition_cnt; i++) {
-                        consume_messages(testid, topics[topic], i, msg_base,
-                                        msgcnt / partition_cnt, msgcnt);
-                        msg_base += msgcnt / partition_cnt;
+                        consume_messages(testid, topics[topic], i, msg_base, batch_cnt, msgcnt);
+                        msg_base += batch_cnt;
                 }
         }
 
