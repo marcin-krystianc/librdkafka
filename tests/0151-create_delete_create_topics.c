@@ -91,20 +91,31 @@ static void produce_messages(uint64_t testid,
         rk = test_create_handle(RD_KAFKA_PRODUCER, conf);
 
         rkts = malloc (sizeof(rd_kafka_topic_t*) * topics_cnt);
-        for (size_t topic = 0; topic < topics_cnt; topic++)
-        {                
-                rd_kafka_topic_conf_t *topic_conf;
-                test_conf_init(NULL, &topic_conf, 20);
-                /* Make sure all replicas are in-sync after producing
-                * so that consume test wont fail. */
-                rd_kafka_topic_conf_set(topic_conf, "request.required.acks", "-1",
-                                        errstr, sizeof(errstr));
-                                        
-                rkts[topic] = rd_kafka_topic_new(rk, topics[topic], topic_conf);
-                if (!rkts[topic])
-                        TEST_FAIL("Failed to create topic: %s\n", rd_strerror(errno));
+        for (int i =0; i< 10; i++)
+        {
+                for (size_t topic = 0; topic < topics_cnt; topic++)        
+                {
+                        rd_kafka_topic_conf_t *topic_conf;
+                        test_conf_init(NULL, &topic_conf, 20);
+                        /* Make sure all replicas are in-sync after producing
+                        * so that consume test wont fail. */
+                        rd_kafka_topic_conf_set(topic_conf, "request.required.acks", "-1",
+                                                errstr, sizeof(errstr));
+                                                
+                        rkts[topic] = rd_kafka_topic_new(rk, topics[topic], topic_conf);
+                        if (!rkts[topic])
+                                TEST_FAIL("Failed to create topic: %s\n", rd_strerror(errno));
+                        
+                        if (i< 99)
+                        {
+                                rd_kafka_queue_t *q = rd_kafka_queue_get_main(rk);
+                                rd_kafka_DeleteTopic_t* topic_to_delete = rd_kafka_DeleteTopic_new(topics[topic]);
+                                rd_kafka_DeleteTopics(rk, &topic_to_delete, 1, NULL, q);
+                                rd_kafka_DeleteTopic_destroy(topic_to_delete);
+                        }
+                }
         }
-
+      
         int batch_cnt = msgcnt / topics_cnt / partition_cnt;
 
         /* Create messages. */        
@@ -125,7 +136,6 @@ static void produce_messages(uint64_t testid,
                         TEST_SAY("Start produce to partition %i: msgs #%d..%d\n",
                          (int)partition, msgid - batch_cnt, msgid);
 
-                
                         /* Produce batch for this partition */
                         r = rd_kafka_produce_batch(rkts[topic], partition, RD_KAFKA_MSG_F_FREE,
                                                 rkmessages, batch_cnt);
@@ -402,118 +412,21 @@ static void consume_messages(uint64_t testid,
         rd_kafka_destroy(rk);
 }
 
-
-static void consume_messages_with_queues(uint64_t testid,
-                                         const char *topic,
-                                         int partition_cnt,
-                                         int msgcnt) {
-        rd_kafka_t *rk;
-        rd_kafka_topic_t *rkt;
-        rd_kafka_conf_t *conf;
-        rd_kafka_topic_conf_t *topic_conf;
-        rd_kafka_queue_t *rkqu;
-        int i;
-        int32_t partition;
-        int batch_cnt = msgcnt / partition_cnt;
-
-        test_conf_init(&conf, &topic_conf, 20);
-
-        test_conf_set(conf, "enable.partition.eof", "true");
-
-        /* Create kafka instance */
-        rk = test_create_handle(RD_KAFKA_CONSUMER, conf);
-
-        /* Create queue */
-        rkqu = rd_kafka_queue_new(rk);
-
-
-        rkt = rd_kafka_topic_new(rk, topic, topic_conf);
-        if (!rkt)
-                TEST_FAIL("Failed to create topic: %s\n", rd_strerror(errno));
-
-        TEST_SAY("Consuming %i messages from one queue serving %i partitions\n",
-                 msgcnt, partition_cnt);
-
-        /* Start consuming each partition */
-        for (partition = 0; partition < partition_cnt; partition++) {
-                /* Consume messages */
-                TEST_SAY("Start consuming partition %i at offset -%i\n",
-                         partition, batch_cnt);
-                if (rd_kafka_consume_start_queue(
-                        rkt, partition, RD_KAFKA_OFFSET_TAIL(batch_cnt),
-                        rkqu) == -1)
-                        TEST_FAIL("consume_start_queue(%i) failed: %s",
-                                  (int)partition,
-                                  rd_kafka_err2str(rd_kafka_last_error()));
-        }
-
-
-        /* Consume messages from queue */
-        for (i = 0; i < msgcnt;) {
-                rd_kafka_message_t *rkmessage;
-
-                rkmessage = rd_kafka_consume_queue(rkqu, tmout_multip(5000));
-                if (!rkmessage)
-                        TEST_FAIL(
-                            "Failed to consume message %i/%i from "
-                            "queue: %s",
-                            i, msgcnt, rd_kafka_err2str(rd_kafka_last_error()));
-                if (rkmessage->err) {
-                        if (rkmessage->err ==
-                            RD_KAFKA_RESP_ERR__PARTITION_EOF) {
-                                TEST_SAY("Topic %s [%" PRId32
-                                         "] reached "
-                                         "EOF at offset %" PRId64 "\n",
-                                         rd_kafka_topic_name(rkmessage->rkt),
-                                         rkmessage->partition,
-                                         rkmessage->offset);
-                                rd_kafka_message_destroy(rkmessage);
-                                continue;
-                        }
-                        TEST_FAIL(
-                            "Consume message %i/%i from queue "
-                            "has error (offset %" PRId64 ", partition %" PRId32
-                            "): %s",
-                            i, msgcnt, rkmessage->offset, rkmessage->partition,
-                            rd_kafka_err2str(rkmessage->err));
-                }
-
-                verify_consumed_msg(testid, -1, -1, rkmessage);
-
-                rd_kafka_message_destroy(rkmessage);
-                i++;
-        }
-
-        /* Stop consuming each partition */
-        for (partition = 0; partition < partition_cnt; partition++)
-                rd_kafka_consume_stop(rkt, partition);
-
-        /* Destroy queue */
-        rd_kafka_queue_destroy(rkqu);
-
-        /* Destroy topic */
-        rd_kafka_topic_destroy(rkt);
-
-        /* Destroy rdkafka instance */
-        TEST_SAY("Destroying kafka instance %s\n", rd_kafka_name(rk));
-        rd_kafka_destroy(rk);
-}
-
-
 /**
  * Produce to two partitions.
  * Consume with standard interface from both, one after the other.
  * Consume with queue interface from both, simultanously.
  */
 static void test_produce_consume(void) {
-        int msgcnt        = test_quick ? 100 : 1000;
+        int msgcnt        = test_quick ? 10000 : 100000;
         int partition_cnt = 2;
-        int topics_cnt = 10;
+        int topics_cnt = 1000;
         int i;
         uint64_t testid;
         int msg_base = 0;
         const char **topics;
-
+        prod_msg_remains = msgcnt;
+        
         /* Generate a testid so we can differentiate messages
          * from other tests */
         testid = test_id_generate();
@@ -545,15 +458,6 @@ static void test_produce_consume(void) {
                         consume_messages(testid, topics[topic], i, msg_base, batch_cnt, msgcnt);
                         msg_base += batch_cnt;
                 }
-        }
-
-        verify_consumed_msg_check();
-
-        /* Consume messages with queue interface */
-        verify_consumed_msg_reset(msgcnt);
-        for (int topic = 0; topic < topics_cnt; topic++)
-        {
-                consume_messages_with_queues(testid, topics[topic], partition_cnt, msgcnt);
         }
 
         verify_consumed_msg_check();
