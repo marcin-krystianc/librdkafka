@@ -510,8 +510,8 @@ static struct rd_kafka_metadata_cache_entry *rd_kafka_metadata_cache_insert(
                 rd_avl_wrunlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
 
                 /* Delete and free old cache entry */
-                rd_kafka_metadata_cache_delete(rk, old, 1);
-                // rd_kafka_metadata_cache_delete(rk, old, 0);
+                // rd_kafka_metadata_cache_delete(rk, old, 1);
+                rd_kafka_metadata_cache_delete(rk, old, 0);
 
                 rd_avl_wrlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
                 validate_tree (rk->rk_metadata_cache.rkmc_avl_by_id.ravl_root, 0);
@@ -526,8 +526,8 @@ static struct rd_kafka_metadata_cache_entry *rd_kafka_metadata_cache_insert(
                 rd_avl_wrunlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
 
                 RD_AVL_REMOVE_ELM(&rk->rk_metadata_cache.rkmc_avl, old_by_id);
-                rd_kafka_metadata_cache_delete(rk, old_by_id, 1);
-                // rd_kafka_metadata_cache_delete(rk, old_by_id, 0);
+                // rd_kafka_metadata_cache_delete(rk, old_by_id, 1);
+                rd_kafka_metadata_cache_delete(rk, old_by_id, 0);
                 
                 rd_avl_wrlock(&rk->rk_metadata_cache.rkmc_avl_by_id);
                 validate_tree (rk->rk_metadata_cache.rkmc_avl_by_id.ravl_root, 0);
