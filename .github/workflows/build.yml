@@ -92,7 +92,6 @@ jobs:
 
   linux-ubuntu-source:
     runs-on: ubuntu-22.04
-    if: "!startsWith(github.ref, 'refs/tags/v')"
     env:
       CFLAGS: -std=gnu90
     steps:
@@ -129,7 +128,6 @@ jobs:
 
   linux-x64-release:
     runs-on: ubuntu-22.04
-    if: startsWith(github.ref, 'refs/tags/')
     strategy:
       matrix:
         include:
@@ -166,7 +164,6 @@ jobs:
 
   linux-arm64-release:
     runs-on: ubuntu-22.04
-    if: startsWith(github.ref, 'refs/tags/')
     strategy:
       matrix:
         include:
