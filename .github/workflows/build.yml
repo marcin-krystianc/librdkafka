@@ -279,7 +279,7 @@ jobs:
           mkdir packages
           cd packaging/nuget
           python3 -m pip install -U -r requirements.txt
-          ./release.py --directory ../../artifacts --ignore-tag --class NugetPackage ${GITHUB_REF#refs/tags/}
+          ./release.py --directory ../../artifacts --ignore-tag --class NugetPackage ${GITHUB_REF#refs/tags/} --nuget-version 2.6.1-gr
           cp -v librdkafka.redist.*.nupkg ../../packages
           ./release.py --directory ../../artifacts --ignore-tag --class StaticPackage ${GITHUB_REF#refs/tags/}
           cp -v librdkafka-static-bundle*.tgz ../../packages
