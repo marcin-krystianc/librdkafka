@@ -286,11 +286,11 @@ jobs:
           cd ../../
           cp -v artifacts/librdkafka-docs/librdkafka-docs.tgz packages/
           cd packages
-          tar cvf librdkafka-packages-${GITHUB_REF#refs/tags/}-${{ github.run_id }}.tar .
+          tar cvf librdkafka.tar .
           ls -la
           sha256sum *
       - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
-          name: librdkafka-packages-${{ github.ref_name }}-${{ github.run_id }}
+          name: librdkafka-packages
           path: packages/
