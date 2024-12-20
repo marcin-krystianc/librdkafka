@@ -267,7 +267,7 @@ jobs:
 
   packaging:
     # needs: [documentation, osx-arm64, osx-x64, linux-x64-release, linux-arm64-release, windows-mingw, windows-msvc]
-    needs: [rwindows-mingw]
+    needs: [windows-mingw]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
