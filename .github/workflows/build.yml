@@ -317,6 +317,7 @@ jobs:
           path: dist
       - name: Publish to NuGet
         run: |
+          ls -al dist
           dotnet nuget push "dist/librdkafka*.nupkg" --source https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json --api-key ${GITHUB_TOKEN}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
