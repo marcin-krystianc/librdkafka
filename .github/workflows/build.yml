@@ -278,10 +278,11 @@ jobs:
         shell: pwsh
         run: |
           # Different packaging for tagged vs untagged builds
+          $vstring = "2.6.1-"
           if ($env:GITHUB_REF -match '^refs/tags/') {
-            $vstring = "2.6.1-gr"
+            $vstring += "gr"
           } else {
-            $vstring = "ci-$env:GITHUB_RUN_ID"
+            $vstring += "ci-$env:GITHUB_RUN_ID"
           }
 
           mkdir packages
