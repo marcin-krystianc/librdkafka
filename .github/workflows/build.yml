@@ -266,8 +266,7 @@ jobs:
           path: artifacts/
 
   packaging:
-    # needs: [documentation, osx-arm64, osx-x64, linux-x64-release, linux-arm64-release, windows-mingw, windows-msvc]
-    needs: [windows-mingw]
+    needs: [documentation, osx-arm64, osx-x64, linux-x64-release, linux-arm64-release, windows-mingw, windows-msvc]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
