@@ -4,10 +4,6 @@ on:
   push:
   pull_request:
 
-env:
-  DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USER }}
-  DOCKERHUB_APIKEY: ${{ secrets.DOCKERHUB_APIKEY }}
-
 jobs:
   osx-arm64:
     runs-on: macos-14
@@ -93,9 +89,6 @@ jobs:
       CFLAGS: -std=gnu90
     steps:
       - uses: actions/checkout@v4
-      - name: Docker login
-        if: env.DOCKERHUB_APIKEY != ''
-        run: docker login --username $DOCKERHUB_USER --password $DOCKERHUB_APIKEY
       - name: Build configuration checks
         run: |
           sudo apt install -y rapidjson-dev
@@ -145,9 +138,6 @@ jobs:
             extra_args: "--disable-gssapi"
     steps:
       - uses: actions/checkout@v4
-      - name: Docker login
-        if: env.DOCKERHUB_APIKEY != ''
-        run: docker login --username $DOCKERHUB_USER --password $DOCKERHUB_APIKEY
       - name: Build
         run: |
           mkdir artifacts
@@ -183,9 +173,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
-      - name: Docker login
-        if: env.DOCKERHUB_APIKEY != ''
-        run: docker login --username $DOCKERHUB_USER --password $DOCKERHUB_APIKEY
       - name: Build
         run: |
           mkdir artifacts
