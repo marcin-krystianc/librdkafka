@@ -96,9 +96,6 @@ jobs:
           ./packaging/tools/build-configurations-checks.sh
       - name: Build and test
         run: |
-          wget -O rapidjson-dev.deb https://launchpad.net/ubuntu/+archive/primary/+files/rapidjson-dev_1.1.0+dfsg2-3_all.deb
-          sudo dpkg -i rapidjson-dev.deb
-          python3 -m pip install -U pip
           python3 -m pip -V
           (cd tests && python3 -m pip install -r requirements.txt)
           ./configure --install-deps
